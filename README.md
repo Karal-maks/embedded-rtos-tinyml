@@ -1,9 +1,8 @@
-﻿# Embedded FOC Motor Control & TinyML Predictive Maintenance Engine
+﻿# FOC Motor Control + TinyML Fault Classifier (Host-Side HIL Simulation)
 
-A zero-dependency C99 implementation of a **Field-Oriented Control (FOC)** motor drive loop paired with an embedded **TinyML** neural network for real-time mechanical and electrical fault classification.
-
-Designed as a deterministic host-side Hardware-in-the-Loop (HIL) simulation, this project validates the complete signal chain—from current/vibration sampling and Space Vector PWM (SVPWM) modulation to DSP feature extraction, neural network inference, and JSON telemetry serialization—prior to target MCU deployment.
-
+C99 simulation of a Field-Oriented Control (FOC) loop with an embedded MLP
+that classifies four motor fault conditions. Runs on a PC, with the
+structure designed to be portable to a Cortex-M target.
 ---
 
 ## System Architecture
@@ -76,6 +75,13 @@ Requires `gcc` (MinGW-w64 on Windows or standard GCC on Linux/macOS):
     python ml_pipeline/train_export_tinyml.py
 
 ---
+
+## Limitations
+- Sensor data is synthetic; there is no motor/plant model, so the FOC loop is not closed on real dynamics.
+- The "RTOS task notification" is simulated with a flag. On target, this would use FreeRTOS task notifications from the ISR.
+- Accuracy is measured on synthetic data; [update after adding a held-out split].
+- Latency is measured on a PC, not on an MCU.
+- Control rate is 1 kHz for simulation; production FOC typically runs at 10-20 kHz.
 
 ## Engineering Notes & Scope
 
