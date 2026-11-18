@@ -1,4 +1,4 @@
-﻿#include <stdio.h>
+#include <stdio.h>
 #include <stdint.h>
 #include <math.h>
 #include "foc_dsp_engine.h"
@@ -137,7 +137,7 @@ int main(void) {
     float features[NN_INPUT_DIM];
     float probs[NN_OUTPUT_DIM];
 
-    printf("=== D:\\PROJECTS\\Embedded RTOS FOC + TINYML PREDICTIVE ENGINE ===\n");
+    printf("=== FOC + TinyML Predictive Maintenance Engine (Host-Side Simulation) ===\n");
     printf("Config: 1 kHz ISR (dt = 1.0 ms) | Window = %u samples (64 ms)\n\n",
            (unsigned int)SAMPLE_WINDOW_SIZE);
 
