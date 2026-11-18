@@ -77,7 +77,7 @@ def train_tinyml_mlp(X, y, epochs=1500, lr=0.05):
 
     preds = np.argmax(probs, axis=1)
     acc = np.mean(preds == y) * 100.0
-    print(f"[TinyML Trainer] Training Complete | Final Accuracy: {acc:.2f}%")
+    print(f"[TinyML Trainer] Training Complete | Train Accuracy: {acc:.2f}%")
     return mean, std, W1, b1, W2, b2
 
 def export_to_c_header(mean, std, W1, b1, W2, b2, output_header="include/tinyml_weights.h"):
@@ -100,7 +100,39 @@ def export_to_c_header(mean, std, W1, b1, W2, b2, output_header="include/tinyml_
         f.write("#endif // TINYML_WEIGHTS_H\n")
     print(f"[TinyML Exporter] Generated: {os.path.abspath(output_header)}")
 
+def predict(X, mean, std, W1, b1, W2, b2):
+    """Same math as the C inference: normalize -> ReLU layer -> argmax."""
+    a1 = np.maximum(0, ((X - mean) / std) @ W1 + b1)
+    return np.argmax(a1 @ W2 + b2, axis=1)
+
+def print_confusion_matrix(y_true, y_pred, labels):
+    n = len(labels)
+    cm = np.zeros((n, n), dtype=int)
+    for t, p in zip(y_true, y_pred):
+        cm[t][p] += 1
+    print("\nConfusion matrix (rows = true class, columns = predicted):")
+    print(" " * 12 + "".join(f"{l[:9]:>11}" for l in labels))
+    for i, l in enumerate(labels):
+        print(f"{l[:11]:<12}" + "".join(f"{cm[i][j]:>11}" for j in range(n)))
+
 if __name__ == "__main__":
     X, y = generate_motor_dataset()
-    mean, std, W1, b1, W2, b2 = train_tinyml_mlp(X, y)
+
+    # Shuffle, then hold out 20% for testing
+    rng = np.random.default_rng(42)
+    idx = rng.permutation(len(X))
+    split = int(0.8 * len(X))
+    X_train, y_train = X[idx[:split]], y[idx[:split]]
+    X_test,  y_test  = X[idx[split:]], y[idx[split:]]
+    print(f"Train samples: {len(X_train)} | Test samples: {len(X_test)}")
+
+    # Normalization statistics come from the training set only (no leakage)
+    mean, std, W1, b1, W2, b2 = train_tinyml_mlp(X_train, y_train)
+
+    y_pred = predict(X_test, mean, std, W1, b1, W2, b2)
+    test_acc = np.mean(y_pred == y_test) * 100.0
+    print(f"[TinyML Trainer] Test Accuracy (held-out 20%): {test_acc:.2f}%")
+    print_confusion_matrix(y_test, y_pred,
+                           ["NORMAL", "BEARING", "IMBALANCE", "OVERLOAD"])
+
     export_to_c_header(mean, std, W1, b1, W2, b2)
