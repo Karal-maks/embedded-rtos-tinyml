@@ -6,3 +6,4 @@
 .pio/
 __pycache__/
 *.pyc
+foc_tinyml_sim

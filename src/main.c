@@ -1,3 +1,8 @@
+/* clock_gettime() is POSIX, not C99: request it before any system header */
+#if !defined(_WIN32) && !defined(_POSIX_C_SOURCE)
+#define _POSIX_C_SOURCE 199309L
+#endif
+
 #include <stdio.h>
 #include <stdint.h>
 #include <math.h>
@@ -13,10 +18,17 @@ static double get_time_ms(void) {
 }
 #else
 #include <time.h>
+/* Monotonic wall-clock timer with nanosecond resolution.
+ * (clock() measures CPU time in coarse ticks and is not suitable here.) */
 static double get_time_ms(void) {
-    return ((double)clock() * 1000.0) / (double)CLOCKS_PER_SEC;
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1.0e6;
 }
 #endif
+
+#define LATENCY_REPEATS 1000  /* average many runs: one run is below timer resolution */
+#define TWO_PI          6.28318530718f
 
 #define ISR_DT_SEC 0.001f
 #define VDC_BUS    24.0f
@@ -97,6 +109,7 @@ static void tim1_1khz_isr_step(FOC_State_t *foc, PI_Controller_t *pi_d,
                                PI_Controller_t *pi_q, SVPWM_Duty_t *pwm) {
     float vib = 0.0f;
     foc->theta_elec += 0.18f;
+    if (foc->theta_elec >= TWO_PI) foc->theta_elec -= TWO_PI; /* keep float precision */
 
     sample_sensors_hil(dma_sample_idx, foc->theta_elec, &foc->ia, &foc->ib, &vib);
     foc_fast_loop_step(foc, pi_d, pi_q, ISR_DT_SEC);
@@ -119,14 +132,14 @@ static void uart_send_json_telemetry(uint8_t mode, uint8_t pred, float conf,
                                      const float *features, const SVPWM_Duty_t *pwm,
                                      double latency_ms) {
     printf("[Injected: %-21s] -> Predicted: %-21s (Conf: %5.1f%%) | "
-           "Vib_RMS: %4.2fg | Crest: %4.2f | Iq: %4.2fA | Latency: %.4fms\n",
+           "Vib_RMS: %4.2fg | Crest: %4.2f | Iq: %4.2fA | Latency: %.2fus\n",
            FAULT_LABELS[mode], FAULT_LABELS[pred], conf * 100.0f,
-           features[0], features[2], features[4], latency_ms);
+           features[0], features[2], features[4], latency_ms * 1000.0);
 
     printf("  UART_TX -> {\"fault\":\"%s\",\"conf\":%.3f,\"vib_rms\":%.2f,"
-           "\"iq_mean\":%.2f,\"svpwm\":[%.2f,%.2f,%.2f],\"lat_ms\":%.4f}\n",
+           "\"iq_mean\":%.2f,\"svpwm\":[%.2f,%.2f,%.2f],\"lat_us\":%.3f}\n",
            FAULT_LABELS[pred], conf, features[0], features[4],
-           pwm->duty_a, pwm->duty_b, pwm->duty_c, latency_ms);
+           pwm->duty_a, pwm->duty_b, pwm->duty_c, latency_ms * 1000.0);
 }
 
 int main(void) {
@@ -136,6 +149,7 @@ int main(void) {
     SVPWM_Duty_t pwm     = { 0.5f, 0.5f, 0.5f };
     float features[NN_INPUT_DIM];
     float probs[NN_OUTPUT_DIM];
+    int mispredictions = 0;
 
     printf("=== FOC + TinyML Predictive Maintenance Engine (Host-Side Simulation) ===\n");
     printf("Config: 1 kHz ISR (dt = 1.0 ms) | Window = %u samples (64 ms)\n\n",
@@ -150,15 +164,24 @@ int main(void) {
         }
         rtos_task_notify_flag = 0;
 
-        /* Measure TinyML DSP + Inference execution latency */
-        double t_start = get_time_ms();
+        /* DSP + inference on the buffer the ISR just finished filling */
         extract_dsp_features(&dma_ping_pong_buf[ready_read_buf], features);
         uint8_t pred = tinyml_predict_fault(features, probs);
-        double latency_ms = get_time_ms() - t_start;
+
+        /* Latency: average of LATENCY_REPEATS identical runs (host PC, not MCU) */
+        volatile uint8_t sink = 0;
+        double t_start = get_time_ms();
+        for (int r = 0; r < LATENCY_REPEATS; r++) {
+            extract_dsp_features(&dma_ping_pong_buf[ready_read_buf], features);
+            sink ^= tinyml_predict_fault(features, probs);
+        }
+        double latency_ms = (get_time_ms() - t_start) / LATENCY_REPEATS;
+        (void)sink;
 
         uart_send_json_telemetry(mode, pred, probs[pred], features, &pwm, latency_ms);
+        if (pred != mode) mispredictions++;
     }
 
-    printf("\n=== Execution Complete ===\n");
-    return 0;
+    printf("\n=== Execution Complete: %d/4 correct ===\n", 4 - mispredictions);
+    return mispredictions == 0 ? 0 : 1;
 }
